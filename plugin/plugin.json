@@ -1,0 +1,14 @@
+{
+  "id": "watc-channels",
+  "name": "Channels",
+  "version": "0.1.0",
+  "description": "Toggle which TAK Server groups (data-sync channels / broadcast groups) are active for this connection, matching ATAK's Channels tool.",
+  "author": "Jonathan Pattara — ILWG CAP",
+  "entry": "index.js",
+  "type": "module",
+  "icon": "🔀",
+  "permissions": ["network"],
+  "capabilities": {
+    "api": ["Marti/api/groups/all", "Marti/api/groups/active"]
+  }
+}

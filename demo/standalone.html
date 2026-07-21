@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebTAK Channels — Standalone Test</title>
+  <style>
+    body { margin: 0; min-height: 100vh; background:
+      radial-gradient(circle at 30% 20%, #10233f 0, #0a0a0a 60%);
+      color: #e8ebf2; font-family: 'Segoe UI', system-ui, sans-serif; }
+    .hdr { padding: 18px 24px; border-bottom: 1px solid #242424;
+      background: linear-gradient(135deg, #000d40, #001871); border-bottom: 3px solid #c8102e; }
+    .hdr h1 { margin: 0; font-size: 18px; }
+    .hdr p { margin: 4px 0 0; font-size: 12px; color: rgba(255,255,255,.6); }
+    .panel { max-width: 720px; margin: 24px auto; padding: 0 20px; }
+    .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .1em; color: #7c8598; }
+    button { background: #001871; color: #fff; border: 1px solid #c8102e; padding: 10px 16px;
+      border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; margin: 4px 6px 4px 0; }
+    button:hover { background: #002bb0; }
+    code { background: #17171b; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+    .note { font-size: 12px; color: #8a93a6; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <div class="hdr">
+    <h1>🔀 WebTAK Channels — Standalone Test Harness</h1>
+    <p>Exercises the full Channels panel against a MOCKED Marti groups API (no TAK server needed).</p>
+  </div>
+
+  <div class="panel">
+    <h2>1 · Mock the Marti API</h2>
+    <p class="note">
+      This page stubs <code>window.fetch</code> for <code>/Marti/api/groups/all</code> and
+      <code>/Marti/api/groups/active</code> with an in-memory group list, so you can exercise
+      toggling, filtering, and the optimistic-update/revert-on-failure path without a live server.
+    </p>
+
+    <h2>2 · Open the panel</h2>
+    <button id="open">Open Channels</button>
+    <button id="fail">Toggle "simulate PUT failure"</button>
+    <button id="close">Close</button>
+
+    <h2>Notes</h2>
+    <p class="note">
+      • Against a real TAK server, drop the mock and the plugin talks to
+      <code>GET /Marti/api/groups/all</code> / <code>PUT /Marti/api/groups/active</code> on
+      the same origin, using the operator's existing session cookie.<br>
+      • Drag the panel by its header; use the search box to filter by channel name.<br>
+      • Flipping a switch applies immediately (optimistic update), same as ATAK's Channels tool.
+    </p>
+  </div>
+
+  <script>
+    // --- Mock Marti groups API -------------------------------------------------
+    let simulateFailure = false;
+    const mockGroups = [
+      { name: '__ANON__',      direction: 'BOTH', type: 'SYSTEM', bitpos: 0, created: '2024-01-01T00:00:00Z', active: true },
+      { name: 'Blue',          direction: 'BOTH', type: 'LDAP',   bitpos: 1, created: '2024-01-01T00:00:00Z', active: true },
+      { name: 'Red',           direction: 'BOTH', type: 'LDAP',   bitpos: 2, created: '2024-01-01T00:00:00Z', active: false },
+      { name: 'ILWG-CAP-Ops',  direction: 'IN',   type: 'LDAP',   bitpos: 3, created: '2024-02-10T00:00:00Z', active: true },
+      { name: 'ILWG-CAP-Log',  direction: 'OUT',  type: 'LDAP',   bitpos: 4, created: '2024-02-10T00:00:00Z', active: false },
+      { name: 'Mission-VISTA', direction: 'BOTH', type: 'MISSION',bitpos: 5, created: '2024-05-01T00:00:00Z', active: true },
+    ];
+
+    const realFetch = window.fetch.bind(window);
+    window.fetch = async (url, opts = {}) => {
+      const u = String(url);
+      if (u.endsWith('/Marti/api/groups/all')) {
+        return new Response(JSON.stringify({ version: '3', type: 'com.bbn.marti.remote.groups.Group', data: mockGroups, nodeId: 'demo' }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (u.endsWith('/Marti/api/groups/active') && opts.method === 'PUT') {
+        if (simulateFailure) return new Response('simulated failure', { status: 500 });
+        const patch = JSON.parse(opts.body);
+        patch.forEach((p) => { const g = mockGroups.find((m) => m.name === p.name); if (g) g.active = p.active; });
+        return new Response(JSON.stringify({ version: '3', data: mockGroups }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return realFetch(url, opts);
+    };
+  </script>
+
+  <script type="module">
+    import channels from '../plugin/src/core.js';
+
+    document.getElementById('open').onclick = () => channels.open();
+    document.getElementById('close').onclick = () => channels.close();
+    document.getElementById('fail').onclick = (e) => {
+      simulateFailure = !simulateFailure;
+      e.target.textContent = simulateFailure
+        ? 'Simulating PUT failure — click to stop'
+        : 'Toggle "simulate PUT failure"';
+    };
+  </script>
+</body>
+</html>
