@@ -3,21 +3,11 @@
 // consistent with the sibling Video Viewer plugin.
 
 const CSS = `
-.watc-panel-wrap { position: fixed; inset: 0; z-index: 2147483000; pointer-events: none;
-  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
-.watc-panel-wrap * { box-sizing: border-box; }
-
-.watc-panel { position: absolute; top: 60px; right: 16px; width: 360px; max-height: calc(100vh - 100px);
-  background: #111114; border: 1px solid #242424; border-radius: 10px; color: #e8ebf2;
-  box-shadow: 0 8px 28px rgba(0,0,0,.6); pointer-events: auto; display: flex; flex-direction: column;
-  overflow: hidden; }
-.watc-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px;
-  background: linear-gradient(135deg, #000d40, #001871); border-bottom: 2px solid #c8102e; cursor: move;
-  user-select: none; flex: 0 0 auto; }
-.watc-head-title { flex: 1; font-size: 13px; font-weight: 700; letter-spacing: .03em; color: #fff; }
-.watc-btn { width: 22px; height: 22px; border: none; background: transparent; color: #cfd6e6;
-  font-size: 14px; cursor: pointer; border-radius: 4px; line-height: 1; flex: 0 0 auto; }
-.watc-btn:hover { background: rgba(255,255,255,.15); color: #fff; }
+/* ===== Docked content — used both inside WebTAK's own side drawer (mounted directly,
+   no wrapper needed) and inside the floating fallback chrome below. ===== */
+.watc-content { display: flex; flex-direction: column; height: 100%; background: #111114;
+  color: #e8ebf2; overflow: hidden; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+.watc-content * { box-sizing: border-box; }
 
 .watc-toolbar { display: flex; gap: 8px; padding: 10px 14px; border-bottom: 1px solid #242424; flex: 0 0 auto; }
 .watc-search { flex: 1; padding: 6px 10px; background: #0b0b0e; border: 1px solid #2a2a30;
@@ -55,6 +45,25 @@ const CSS = `
 
 .watc-foot { padding: 8px 14px; border-top: 1px solid #242424; font-size: 11px; color: #7c8598;
   flex: 0 0 auto; }
+
+/* ===== Floating fallback chrome — only used when WebTAK's real docked drawer isn't
+   available (standalone demo, or registration failed). The real-drawer path mounts
+   .watc-content straight into WebTAK's own panel and needs none of this. ===== */
+.watc-panel-wrap { position: fixed; inset: 0; z-index: 2147483000; pointer-events: none;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+.watc-panel-wrap * { box-sizing: border-box; }
+
+.watc-panel { position: absolute; top: 60px; right: 16px; width: 360px; max-height: calc(100vh - 100px);
+  border: 1px solid #242424; border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.6);
+  pointer-events: auto; display: flex; flex-direction: column; overflow: hidden; }
+.watc-panel .watc-host { flex: 1 1 auto; overflow: hidden; display: flex; }
+.watc-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px;
+  background: linear-gradient(135deg, #000d40, #001871); border-bottom: 2px solid #c8102e; cursor: move;
+  user-select: none; flex: 0 0 auto; }
+.watc-head-title { flex: 1; font-size: 13px; font-weight: 700; letter-spacing: .03em; color: #fff; }
+.watc-btn { width: 22px; height: 22px; border: none; background: transparent; color: #cfd6e6;
+  font-size: 14px; cursor: pointer; border-radius: 4px; line-height: 1; flex: 0 0 auto; }
+.watc-btn:hover { background: rgba(255,255,255,.15); color: #fff; }
 
 .watc-launch { position: fixed; bottom: 16px; right: 84px; z-index: 2147483050; pointer-events: auto;
   background: linear-gradient(135deg, #000d40, #001871); color: #fff; border: 1px solid #c8102e;

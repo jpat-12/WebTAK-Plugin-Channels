@@ -117,21 +117,11 @@ async function pushActiveGroups(base, groups) {
 // consistent with the sibling Video Viewer plugin.
 
 const CSS = `
-.watc-panel-wrap { position: fixed; inset: 0; z-index: 2147483000; pointer-events: none;
-  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
-.watc-panel-wrap * { box-sizing: border-box; }
-
-.watc-panel { position: absolute; top: 60px; right: 16px; width: 360px; max-height: calc(100vh - 100px);
-  background: #111114; border: 1px solid #242424; border-radius: 10px; color: #e8ebf2;
-  box-shadow: 0 8px 28px rgba(0,0,0,.6); pointer-events: auto; display: flex; flex-direction: column;
-  overflow: hidden; }
-.watc-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px;
-  background: linear-gradient(135deg, #000d40, #001871); border-bottom: 2px solid #c8102e; cursor: move;
-  user-select: none; flex: 0 0 auto; }
-.watc-head-title { flex: 1; font-size: 13px; font-weight: 700; letter-spacing: .03em; color: #fff; }
-.watc-btn { width: 22px; height: 22px; border: none; background: transparent; color: #cfd6e6;
-  font-size: 14px; cursor: pointer; border-radius: 4px; line-height: 1; flex: 0 0 auto; }
-.watc-btn:hover { background: rgba(255,255,255,.15); color: #fff; }
+/* ===== Docked content — used both inside WebTAK's own side drawer (mounted directly,
+   no wrapper needed) and inside the floating fallback chrome below. ===== */
+.watc-content { display: flex; flex-direction: column; height: 100%; background: #111114;
+  color: #e8ebf2; overflow: hidden; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+.watc-content * { box-sizing: border-box; }
 
 .watc-toolbar { display: flex; gap: 8px; padding: 10px 14px; border-bottom: 1px solid #242424; flex: 0 0 auto; }
 .watc-search { flex: 1; padding: 6px 10px; background: #0b0b0e; border: 1px solid #2a2a30;
@@ -170,6 +160,25 @@ const CSS = `
 .watc-foot { padding: 8px 14px; border-top: 1px solid #242424; font-size: 11px; color: #7c8598;
   flex: 0 0 auto; }
 
+/* ===== Floating fallback chrome — only used when WebTAK's real docked drawer isn't
+   available (standalone demo, or registration failed). The real-drawer path mounts
+   .watc-content straight into WebTAK's own panel and needs none of this. ===== */
+.watc-panel-wrap { position: fixed; inset: 0; z-index: 2147483000; pointer-events: none;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+.watc-panel-wrap * { box-sizing: border-box; }
+
+.watc-panel { position: absolute; top: 60px; right: 16px; width: 360px; max-height: calc(100vh - 100px);
+  border: 1px solid #242424; border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.6);
+  pointer-events: auto; display: flex; flex-direction: column; overflow: hidden; }
+.watc-panel .watc-host { flex: 1 1 auto; overflow: hidden; display: flex; }
+.watc-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px;
+  background: linear-gradient(135deg, #000d40, #001871); border-bottom: 2px solid #c8102e; cursor: move;
+  user-select: none; flex: 0 0 auto; }
+.watc-head-title { flex: 1; font-size: 13px; font-weight: 700; letter-spacing: .03em; color: #fff; }
+.watc-btn { width: 22px; height: 22px; border: none; background: transparent; color: #cfd6e6;
+  font-size: 14px; cursor: pointer; border-radius: 4px; line-height: 1; flex: 0 0 auto; }
+.watc-btn:hover { background: rgba(255,255,255,.15); color: #fff; }
+
 .watc-launch { position: fixed; bottom: 16px; right: 84px; z-index: 2147483050; pointer-events: auto;
   background: linear-gradient(135deg, #000d40, #001871); color: #fff; border: 1px solid #c8102e;
   border-radius: 22px; padding: 10px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
@@ -187,68 +196,54 @@ function injectStyles() {
 
 
 /* ===== src/ui.js ===== */
-// The Channels panel: a floating, draggable window listing every TAK Server group
-// (channel) the current connection is a member of, with a toggle switch per group that
-// flips its active/inactive state — mirroring ATAK's Channels tool.
+// The Channels content: a filterable list of TAK Server groups (channels), each with a
+// toggle switch that flips its active/inactive state — mirroring ATAK's Channels tool.
+//
+// This builds directly INTO a given host element rather than creating its own floating
+// chrome, so the exact same class works two ways:
+//   1. As the content of a REAL WebTAK docked side drawer (see ../index.js), whose
+//      `mount(container)`/`unmount(container)` contract (confirmed by reading WebTAK's
+//      own Drawer class out of its bundled source) just needs a plain DOM element to
+//      fill — no React required.
+//   2. Inside the floating-panel fallback (./floating-panel.js) used when running
+//      standalone or when WebTAK's drawer API isn't present.
 //
 // Each toggle applies immediately (optimistic UI update, PUT to the server, revert on
 // failure) rather than requiring a separate "Save" step, matching ATAK's behavior.
 
 
 class ChannelsPanel {
-  constructor() {
+  constructor(host) {
+    this.host = host;
     this.groups = [];
     this.filter = '';
     this._loading = false;
 
-    const wrap = document.createElement('div');
-    wrap.className = 'watc-panel-wrap';
-    wrap.innerHTML = `
-      <div class="watc-panel">
-        <div class="watc-head">
-          <span class="watc-head-title">🔀 Channels</span>
-          <button class="watc-btn watc-hide" title="Hide">&#8211;</button>
-          <button class="watc-btn watc-close" title="Close">&#10005;</button>
-        </div>
-        <div class="watc-toolbar">
-          <input class="watc-search" type="text" placeholder="Filter channels…" />
-          <button class="watc-refresh">Refresh</button>
-        </div>
-        <div class="watc-body"><div class="watc-empty">Loading…</div></div>
-        <div class="watc-foot"></div>
-      </div>`;
-    this.wrap = wrap;
-    this.panel = wrap.querySelector('.watc-panel');
-    this.body = wrap.querySelector('.watc-body');
-    this.foot = wrap.querySelector('.watc-foot');
+    host.classList.add('watc-content');
+    host.innerHTML = `
+      <div class="watc-toolbar">
+        <input class="watc-search" type="text" placeholder="Filter channels…" />
+        <button class="watc-refresh">Refresh</button>
+      </div>
+      <div class="watc-body"><div class="watc-empty">Loading…</div></div>
+      <div class="watc-foot"></div>`;
+    this.body = host.querySelector('.watc-body');
+    this.foot = host.querySelector('.watc-foot');
 
-    wrap.querySelector('.watc-close').addEventListener('click', () => this.destroy());
-    wrap.querySelector('.watc-hide').addEventListener('click', () => this.toggleVisible());
-    wrap.querySelector('.watc-refresh').addEventListener('click', () => this.refresh());
-    wrap.querySelector('.watc-search').addEventListener('input', (e) => {
+    host.querySelector('.watc-refresh').addEventListener('click', () => this.refresh());
+    host.querySelector('.watc-search').addEventListener('input', (e) => {
       this.filter = e.target.value.trim().toLowerCase();
       this._render();
     });
 
-    this._wireDrag();
-    document.body.appendChild(wrap);
     this.refresh();
-  }
-
-  toggleVisible() {
-    const hidden = this.panel.style.display === 'none';
-    this.panel.style.display = hidden ? 'flex' : 'none';
-  }
-
-  show() {
-    this.panel.style.display = 'flex';
-    this.panel.scrollIntoView?.({ block: 'nearest' });
   }
 
   async refresh() {
     if (this._loading) return;
     this._loading = true;
-    this.wrap.querySelector('.watc-refresh').disabled = true;
+    const refreshBtn = this.host.querySelector('.watc-refresh');
+    refreshBtn.disabled = true;
     this.body.innerHTML = `<div class="watc-empty">Loading…</div>`;
     try {
       const { takServerBase } = getConfig();
@@ -258,7 +253,7 @@ class ChannelsPanel {
       this.body.innerHTML = `<div class="watc-error">${escapeHtml(err.message)}</div>`;
     } finally {
       this._loading = false;
-      this.wrap.querySelector('.watc-refresh').disabled = false;
+      refreshBtn.disabled = false;
     }
   }
 
@@ -323,32 +318,9 @@ class ChannelsPanel {
     }
   }
 
-  _wireDrag() {
-    const head = this.wrap.querySelector('.watc-head');
-    let sx, sy, ox, oy, dragging = false;
-    head.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('.watc-btn')) return;
-      dragging = true;
-      head.setPointerCapture(e.pointerId);
-      sx = e.clientX; sy = e.clientY;
-      const r = this.panel.getBoundingClientRect();
-      ox = r.left; oy = r.top;
-      this.panel.style.right = 'auto';
-    });
-    head.addEventListener('pointermove', (e) => {
-      if (!dragging) return;
-      const maxX = window.innerWidth - 80;
-      const maxY = window.innerHeight - 40;
-      this.panel.style.left = Math.min(Math.max(0, ox + (e.clientX - sx)), maxX) + 'px';
-      this.panel.style.top = Math.min(Math.max(0, oy + (e.clientY - sy)), maxY) + 'px';
-    });
-    const end = (e) => { if (dragging) { dragging = false; try { head.releasePointerCapture(e.pointerId); } catch {} } };
-    head.addEventListener('pointerup', end);
-    head.addEventListener('pointercancel', end);
-  }
-
   destroy() {
-    this.wrap.remove();
+    this.host.innerHTML = '';
+    this.host.classList.remove('watc-content');
   }
 }
 
@@ -356,16 +328,75 @@ const dirRank = (d) => ({ in: 0, out: 1 }[(d || '').toLowerCase()] ?? 2);
 const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 
+/* ===== src/floating-panel.js ===== */
+// Floating draggable chrome around a ChannelsPanel, used only when a real WebTAK docked
+// drawer isn't available (standalone demo, or WebTAK's drawer API missing/failing) — see
+// ../index.js for the real-drawer path, which mounts ChannelsPanel directly into WebTAK's
+// own docked side panel and needs none of this chrome.
+
+
+function mountFloatingPanel() {
+  const wrap = document.createElement('div');
+  wrap.className = 'watc-panel-wrap';
+  wrap.innerHTML = `
+    <div class="watc-panel">
+      <div class="watc-head">
+        <span class="watc-head-title">🔀 Channels</span>
+        <button class="watc-btn watc-close" title="Close">&#10005;</button>
+      </div>
+      <div class="watc-host"></div>
+    </div>`;
+  const panel = wrap.querySelector('.watc-panel');
+  const head = wrap.querySelector('.watc-head');
+  const host = wrap.querySelector('.watc-host');
+
+  document.body.appendChild(wrap);
+  const content = new ChannelsPanel(host);
+
+  const destroy = () => { content.destroy(); wrap.remove(); };
+  wrap.querySelector('.watc-close').addEventListener('click', destroy);
+
+  let sx, sy, ox, oy, dragging = false;
+  head.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('.watc-btn')) return;
+    dragging = true;
+    head.setPointerCapture(e.pointerId);
+    sx = e.clientX; sy = e.clientY;
+    const r = panel.getBoundingClientRect();
+    ox = r.left; oy = r.top;
+    panel.style.right = 'auto';
+  });
+  head.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const maxX = window.innerWidth - 80;
+    const maxY = window.innerHeight - 40;
+    panel.style.left = Math.min(Math.max(0, ox + (e.clientX - sx)), maxX) + 'px';
+    panel.style.top = Math.min(Math.max(0, oy + (e.clientY - sy)), maxY) + 'px';
+  });
+  const endDrag = (e) => { if (dragging) { dragging = false; try { head.releasePointerCapture(e.pointerId); } catch {} } };
+  head.addEventListener('pointerup', endDrag);
+  head.addEventListener('pointercancel', endDrag);
+
+  return {
+    show() { panel.style.display = 'flex'; content.refresh(); },
+    destroy,
+  };
+}
+
+
 /* ===== src/core.js ===== */
 // Framework-free core of WebTAK Channels. This module has ZERO dependency on WebTAK
 // internals, so it runs identically inside WebTAK, in the standalone demo page, or
-// injected via a bookmarklet. The WebTAK entry (../index.js) just calls open() on this.
+// injected via a bookmarklet. The WebTAK entry (../index.js) builds a real docked
+// WebTAK drawer and calls setDrawerOpener() so open() uses that; without it, open()
+// falls back to a floating panel (see ./floating-panel.js).
 
 
 class Channels {
   constructor() {
-    this._panel = null;
+    this._floating = null;
     this._launchBtn = null;
+    this._openDrawer = null;
   }
 
   /** Idempotent. Injects styles. Safe to call more than once. */
@@ -374,21 +405,27 @@ class Channels {
     return this;
   }
 
-  /** Open the Channels panel (creating it on first call, showing/refreshing after). */
+  /** Registers a real WebTAK drawer's open() in place of the floating fallback. */
+  setDrawerOpener(fn) {
+    this._openDrawer = fn;
+    return this;
+  }
+
+  /** Open Channels — a real docked WebTAK drawer if registered, else a floating panel. */
   open() {
     this.mount();
-    if (this._panel) {
-      this._panel.show();
-      this._panel.refresh();
-    } else {
-      this._panel = new ChannelsPanel();
+    if (this._openDrawer) {
+      this._openDrawer();
+      return this;
     }
+    if (this._floating) this._floating.show();
+    else this._floating = mountFloatingPanel();
     return this;
   }
 
   close() {
-    this._panel?.destroy();
-    this._panel = null;
+    this._floating?.destroy();
+    this._floating = null;
     return this;
   }
 
@@ -425,32 +462,68 @@ const channels = instance;
 // WebTAK entry point.
 //
 // WebTAK 4.10's real plugin/sidebar API is window.WebTAK.plugin.registerPlugin(), which
-// takes a Plugin model instance (window.WebTAK.plugin.models.Plugin) built from one or
-// more Tool instances (window.WebTAK.tool.models.Tool). This shape + the reverse-engineering
-// notes below are carried over verbatim from the sibling Video Viewer plugin
-// (WebTAK-Plugin-VideoViewer/plugin/index.js), which pulled it from a live WebTAK session
-// and confirmed it against WebTAK's own main.*.js bundle. Registration is wrapped so any
-// unexpected failure here can only fall back to the floating button, never crash WebTAK.
+// takes a Plugin model instance built from Tool instances (window.WebTAK.tool.models.Tool)
+// and, for a real docked side panel like Contacts/Point Dropper, Drawer instances
+// (window.WebTAK.drawer.models.Drawer). This shape is NOT guessed: it was read directly
+// out of WebTAK 4.10.2's shipped bundle (build/static/js/main.*.js in
+// webtak-core-v4.10.2.zip) — specifically the Drawer class constructor and
+// PluginService.registerPlugin(), which forwards each entry in a Plugin's `drawers`
+// array to DrawerService.registerDrawer() for us.
+//
+// Drawer's `mount`/`unmount` contract: WebTAK checks `mount.length` (its declared arity).
+// A 1-argument mount (`mount(container)`) is treated as plain-DOM mode — WebTAK calls
+// mount(container)/unmount(container) directly on a real element, no React needed. A
+// 0-argument mount is treated as "returns a React element" instead. We use the DOM path
+// since this plugin has no framework dependency (see ../plugin/src/*.js).
+//
+// Registration is wrapped so any unexpected failure (wrong WebTAK build, API shape
+// drift) can only fall back to the floating panel/button, never crash WebTAK — this is
+// the same defensive posture the sibling Video Viewer plugin uses after an earlier,
+// less careful attempt at drawer registration blanked WebTAK's page (grey screen).
 //
 // Plugin constructor requires: name, description, version (non-empty strings), and
-// tools/drawers as arrays (even empty). Tool instances must be real `new Tool(...)`
-// objects, not plain object literals.
+// tools/drawers as arrays (even empty). Tool/Drawer instances must be real
+// `new Tool(...)` / `new Drawer(...)` objects, not plain object literals.
 
 
 const LOG = '[WebTAK Channels]';
+const PLUGIN_ID = 'watc-channels';
 
 // 24x24 shuffle/channels glyph, so we don't depend on WebTAK's built-in icon font names.
 const ICON_URL =
   'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0Ij48cGF0aCBmaWxsPSIjRDVENUQ1IiBkPSJNMTcgM2w0IDQtNCA0VjhoLTVMOSA1bDMtM2gyLjV2MXptLTEwIDVsLTQgNCA0IDR2LTNoNWwzLTMtMy0zSDd6bTEwIDVsNCA0LTQgNHYtM2gtNS41bC0yLjUtMi41IDIuNS0yLjVIMTd2LTJ6Ii8+PC9zdmc+';
 
+// Builds a real Drawer if window.WebTAK.drawer's model is present, else null (caller
+// falls back to the floating panel). `content` tracks the mounted ChannelsPanel so
+// unmount() can tear it down cleanly if WebTAK detaches/reattaches the drawer.
+function buildDrawer(drawerApi) {
+  if (!drawerApi || !drawerApi.models || !drawerApi.models.Drawer) return null;
+  let content = null;
+  return new drawerApi.models.Drawer({
+    name: PLUGIN_ID,
+    displayName: 'Channels',
+    orientation: 'side',
+    mount: (container) => {
+      injectStyles();
+      content = new ChannelsPanel(container);
+    },
+    unmount: () => {
+      content?.destroy();
+      content = null;
+    },
+  });
+}
+
 function registerWithWebTAK() {
   try {
     const toolApi = window.WebTAK && window.WebTAK.tool;
     const pluginApi = window.WebTAK && window.WebTAK.plugin;
+    const drawerApi = window.WebTAK && window.WebTAK.drawer;
     if (!toolApi || !pluginApi) return false;
 
-    const PLUGIN_ID = 'watc-channels';
     if (pluginApi.hasPlugin(PLUGIN_ID)) return true; // already registered (e.g. hot reload)
+
+    const drawer = buildDrawer(drawerApi);
 
     const tool = new toolApi.models.Tool({
       category: 'other',
@@ -458,7 +531,7 @@ function registerWithWebTAK() {
       name: PLUGIN_ID,
       title: 'Channels',
       deviceTypes: 'all',
-      onClick: () => channels.open(),
+      onClick: () => (drawer ? drawer.open() : channels.open()),
     });
 
     const plugin = new pluginApi.models.Plugin({
@@ -466,13 +539,15 @@ function registerWithWebTAK() {
       description: 'Toggle which TAK Server groups (data-sync channels) are active for this connection.',
       version: '0.1.0',
       tools: [tool],
-      drawers: [],
+      drawers: drawer ? [drawer] : [],
     });
 
     pluginApi.registerPlugin(plugin);
-    return pluginApi.hasPlugin(PLUGIN_ID);
+    const ok = pluginApi.hasPlugin(PLUGIN_ID);
+    if (ok && drawer) channels.setDrawerOpener(() => drawer.open());
+    return ok;
   } catch (e) {
-    console.warn(LOG, 'sidebar registration failed, falling back to floating button:', e);
+    console.warn(LOG, 'sidebar/drawer registration failed, falling back to floating panel:', e);
     return false;
   }
 }
@@ -480,12 +555,12 @@ function registerWithWebTAK() {
 function boot() {
   channels.mount();
   if (registerWithWebTAK()) {
-    console.info(LOG, 'Registered as a WebTAK sidebar tool.');
+    console.info(LOG, 'Registered as a WebTAK sidebar tool + docked drawer.');
   } else {
-    // Fallback: couldn't register as a sidebar tool — floating launch button so Channels
-    // is still usable. window.TAKChannels is always available too.
+    // Fallback: couldn't register as a sidebar tool/drawer — floating launch button so
+    // Channels is still usable. window.TAKChannels is always available too.
     channels.showLaunchButton('🔀 Channels');
-    console.info(LOG, 'Using floating launch button (sidebar registration unavailable).');
+    console.info(LOG, 'Using floating launch button (sidebar/drawer registration unavailable).');
   }
 }
 

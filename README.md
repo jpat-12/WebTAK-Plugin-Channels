@@ -32,6 +32,21 @@ authenticated TAK Server client (session cookie already set), the plugin needs n
 config, API key, or separate login — unlike the Video Viewer plugin, which talks to a
 different host (the Restreamer) and does need connection settings.
 
+### Why a toggle only affects *future* data, not what's already on the map
+
+Toggling a channel off tells the server to stop sending that group's CoT to this
+connection from now on — it does **not** retroactively remove items already drawn on
+your map from before you turned it off. This was checked directly, not assumed: WebTAK's
+own CoT model (`window.WebTAK.cot`, and the `CotEvent`/`CotEventDetail` protobuf schema
+inside WebTAK's shipped bundle) carries no group/channel tag on cached events at all — the
+`access` field comes back blank, `detail.group` is CoT's `<__group>` **ATAK team/role**
+field (e.g. "Cyan / Team Member"), not a Marti broadcast group, and there's no `marti`/
+`dest` field anywhere in the schema. The Marti group filter happens entirely server-side,
+before an event is ever forwarded to a client — so by the time WebTAK has it, there is no
+data left saying which channel it came from. Matches ATAK's own behavior in this respect:
+this is a property of the underlying TAK Server mechanism, not a gap specific to this
+plugin.
+
 ---
 
 ## Layout
@@ -39,13 +54,18 @@ different host (the Restreamer) and does need connection settings.
 ```
 plugin/
   plugin.json          Plugin manifest
-  index.js             WebTAK entry shim (registration + fallback launch button)
+  index.js             WebTAK entry: registers a real docked drawer + sidebar tool,
+                        falls back to a floating panel/button if that API is unavailable
   src/
     core.js            Framework-free singleton (window.TAKChannels)
     config.js          Runtime config (takServerBase override for dev), persisted to localStorage
     marti-groups.js     GET /Marti/api/groups/all + PUT /Marti/api/groups/active client
-    ui.js               The Channels panel: filterable list + per-channel toggle switches
-    styles.js           Injected CSS
+    ui.js               ChannelsPanel: filterable list + per-channel toggle switches,
+                        mounts into any host element (WebTAK's own drawer container, or
+                        the floating fallback below)
+    floating-panel.js   Draggable chrome (header, close, drag) around ChannelsPanel —
+                        only used when WebTAK's real drawer API isn't available
+    styles.js           Injected CSS (docked-content rules + floating-chrome rules)
 demo/
   standalone.html       Test the whole panel against a MOCKED Marti API, no TAK server needed
 ```
@@ -72,8 +92,10 @@ revert-on-failure path before ever pointing this at a real server.
 | Toggle a channel (`PUT .../groups/active`) | ✅ Working | Optimistic UI update, reverts + shows error on failure |
 | Filter/search by name | ✅ Working | Client-side, case-insensitive substring |
 | Direction badge (IN / OUT / BOTH) | ✅ Working | Cosmetic only — doesn't affect the toggle |
-| Draggable floating panel | ✅ Working | Same drag pattern as the Video Viewer's windows |
-| WebTAK sidebar registration | ✅ Working | Falls back to a floating 🔀 launch button if the sidebar API is unavailable |
+| Real docked WebTAK drawer (like Contacts / Point Dropper) | ✅ Working | `Drawer` model + `drawers:[...]` on the Plugin, read directly out of WebTAK's own bundle — see `plugin/index.js` |
+| Draggable floating panel | ✅ Working | Fallback only, when the real drawer API isn't present |
+| WebTAK sidebar registration | ✅ Working | Falls back to a floating 🔀 launch button if the sidebar/drawer API is unavailable |
+| Purge already-displayed map data when a channel is turned off | ⬜ Not possible | Checked directly against WebTAK's CoT model — no group/channel tag survives on a cached event to filter by (see above). Only *future* CoT for that group is stopped. |
 | Group *creation/membership* management | ⬜ Out of scope | That's server-side admin (TAK Server's own group admin UI), not a per-connection toggle |
 
 ## Public API (`window.TAKChannels`)
@@ -111,11 +133,16 @@ broken manifest disables *all* plugin loading), and backs the file up before edi
 Uninstall with `sudo ./install.sh --remove`. Hard-refresh WebTAK (Ctrl-Shift-R) after either.
 
 **Note on integration:** once loaded, the bundle's `boot()` runs and registers a real
-sidebar tool via `window.WebTAK.plugin.registerPlugin()` (WebTAK 4.10's actual plugin API
-— see the Video Viewer plugin's `index.js` for how this was reverse-engineered from a
-live session). If that API isn't present or registration fails for any reason, it falls
-back to a floating 🔀 launch button so Channels stays usable regardless.
-`window.TAKChannels` is always available.
+docked side drawer (`window.WebTAK.drawer.models.Drawer`) plus a sidebar tool
+(`window.WebTAK.plugin.registerPlugin()`) — WebTAK 4.10's actual plugin/drawer API. Unlike
+the Video Viewer plugin (which stopped at a sidebar-triggered floating window after an
+earlier drawer attempt crashed WebTAK's render), this shape was confirmed by reading the
+`Drawer` class and `PluginService.registerPlugin()` directly out of WebTAK 4.10.2's
+shipped bundle (`webtak-core-v4.10.2.zip`, `build/static/js/main.*.js`) rather than
+guessed from a live session, so it should render Channels as a real vertical tab
+alongside Contacts/Point Dropper. If that API isn't present on your WebTAK build, or
+registration fails for any reason, it falls back to a floating 🔀 launch button so
+Channels stays usable regardless. `window.TAKChannels` is always available.
 
 ### Dev / test without WebTAK
 

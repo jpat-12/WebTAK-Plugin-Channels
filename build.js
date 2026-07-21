@@ -22,6 +22,7 @@ const MODULES = [
   'marti-groups.js',
   'styles.js',
   'ui.js',
+  'floating-panel.js',
   'core.js',
 ];
 

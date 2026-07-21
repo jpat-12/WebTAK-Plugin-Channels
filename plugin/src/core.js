@@ -1,15 +1,18 @@
 // Framework-free core of WebTAK Channels. This module has ZERO dependency on WebTAK
 // internals, so it runs identically inside WebTAK, in the standalone demo page, or
-// injected via a bookmarklet. The WebTAK entry (../index.js) just calls open() on this.
+// injected via a bookmarklet. The WebTAK entry (../index.js) builds a real docked
+// WebTAK drawer and calls setDrawerOpener() so open() uses that; without it, open()
+// falls back to a floating panel (see ./floating-panel.js).
 
 import { injectStyles } from './styles.js';
-import { ChannelsPanel } from './ui.js';
+import { mountFloatingPanel } from './floating-panel.js';
 import { getConfig, setConfig } from './config.js';
 
 class Channels {
   constructor() {
-    this._panel = null;
+    this._floating = null;
     this._launchBtn = null;
+    this._openDrawer = null;
   }
 
   /** Idempotent. Injects styles. Safe to call more than once. */
@@ -18,21 +21,27 @@ class Channels {
     return this;
   }
 
-  /** Open the Channels panel (creating it on first call, showing/refreshing after). */
+  /** Registers a real WebTAK drawer's open() in place of the floating fallback. */
+  setDrawerOpener(fn) {
+    this._openDrawer = fn;
+    return this;
+  }
+
+  /** Open Channels — a real docked WebTAK drawer if registered, else a floating panel. */
   open() {
     this.mount();
-    if (this._panel) {
-      this._panel.show();
-      this._panel.refresh();
-    } else {
-      this._panel = new ChannelsPanel();
+    if (this._openDrawer) {
+      this._openDrawer();
+      return this;
     }
+    if (this._floating) this._floating.show();
+    else this._floating = mountFloatingPanel();
     return this;
   }
 
   close() {
-    this._panel?.destroy();
-    this._panel = null;
+    this._floating?.destroy();
+    this._floating = null;
     return this;
   }
 

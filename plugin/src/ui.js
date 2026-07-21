@@ -1,6 +1,14 @@
-// The Channels panel: a floating, draggable window listing every TAK Server group
-// (channel) the current connection is a member of, with a toggle switch per group that
-// flips its active/inactive state — mirroring ATAK's Channels tool.
+// The Channels content: a filterable list of TAK Server groups (channels), each with a
+// toggle switch that flips its active/inactive state — mirroring ATAK's Channels tool.
+//
+// This builds directly INTO a given host element rather than creating its own floating
+// chrome, so the exact same class works two ways:
+//   1. As the content of a REAL WebTAK docked side drawer (see ../index.js), whose
+//      `mount(container)`/`unmount(container)` contract (confirmed by reading WebTAK's
+//      own Drawer class out of its bundled source) just needs a plain DOM element to
+//      fill — no React required.
+//   2. Inside the floating-panel fallback (./floating-panel.js) used when running
+//      standalone or when WebTAK's drawer API isn't present.
 //
 // Each toggle applies immediately (optimistic UI update, PUT to the server, revert on
 // failure) rather than requiring a separate "Save" step, matching ATAK's behavior.
@@ -9,59 +17,37 @@ import { fetchGroups, pushActiveGroups } from './marti-groups.js';
 import { getConfig } from './config.js';
 
 export class ChannelsPanel {
-  constructor() {
+  constructor(host) {
+    this.host = host;
     this.groups = [];
     this.filter = '';
     this._loading = false;
 
-    const wrap = document.createElement('div');
-    wrap.className = 'watc-panel-wrap';
-    wrap.innerHTML = `
-      <div class="watc-panel">
-        <div class="watc-head">
-          <span class="watc-head-title">🔀 Channels</span>
-          <button class="watc-btn watc-hide" title="Hide">&#8211;</button>
-          <button class="watc-btn watc-close" title="Close">&#10005;</button>
-        </div>
-        <div class="watc-toolbar">
-          <input class="watc-search" type="text" placeholder="Filter channels…" />
-          <button class="watc-refresh">Refresh</button>
-        </div>
-        <div class="watc-body"><div class="watc-empty">Loading…</div></div>
-        <div class="watc-foot"></div>
-      </div>`;
-    this.wrap = wrap;
-    this.panel = wrap.querySelector('.watc-panel');
-    this.body = wrap.querySelector('.watc-body');
-    this.foot = wrap.querySelector('.watc-foot');
+    host.classList.add('watc-content');
+    host.innerHTML = `
+      <div class="watc-toolbar">
+        <input class="watc-search" type="text" placeholder="Filter channels…" />
+        <button class="watc-refresh">Refresh</button>
+      </div>
+      <div class="watc-body"><div class="watc-empty">Loading…</div></div>
+      <div class="watc-foot"></div>`;
+    this.body = host.querySelector('.watc-body');
+    this.foot = host.querySelector('.watc-foot');
 
-    wrap.querySelector('.watc-close').addEventListener('click', () => this.destroy());
-    wrap.querySelector('.watc-hide').addEventListener('click', () => this.toggleVisible());
-    wrap.querySelector('.watc-refresh').addEventListener('click', () => this.refresh());
-    wrap.querySelector('.watc-search').addEventListener('input', (e) => {
+    host.querySelector('.watc-refresh').addEventListener('click', () => this.refresh());
+    host.querySelector('.watc-search').addEventListener('input', (e) => {
       this.filter = e.target.value.trim().toLowerCase();
       this._render();
     });
 
-    this._wireDrag();
-    document.body.appendChild(wrap);
     this.refresh();
-  }
-
-  toggleVisible() {
-    const hidden = this.panel.style.display === 'none';
-    this.panel.style.display = hidden ? 'flex' : 'none';
-  }
-
-  show() {
-    this.panel.style.display = 'flex';
-    this.panel.scrollIntoView?.({ block: 'nearest' });
   }
 
   async refresh() {
     if (this._loading) return;
     this._loading = true;
-    this.wrap.querySelector('.watc-refresh').disabled = true;
+    const refreshBtn = this.host.querySelector('.watc-refresh');
+    refreshBtn.disabled = true;
     this.body.innerHTML = `<div class="watc-empty">Loading…</div>`;
     try {
       const { takServerBase } = getConfig();
@@ -71,7 +57,7 @@ export class ChannelsPanel {
       this.body.innerHTML = `<div class="watc-error">${escapeHtml(err.message)}</div>`;
     } finally {
       this._loading = false;
-      this.wrap.querySelector('.watc-refresh').disabled = false;
+      refreshBtn.disabled = false;
     }
   }
 
@@ -136,32 +122,9 @@ export class ChannelsPanel {
     }
   }
 
-  _wireDrag() {
-    const head = this.wrap.querySelector('.watc-head');
-    let sx, sy, ox, oy, dragging = false;
-    head.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('.watc-btn')) return;
-      dragging = true;
-      head.setPointerCapture(e.pointerId);
-      sx = e.clientX; sy = e.clientY;
-      const r = this.panel.getBoundingClientRect();
-      ox = r.left; oy = r.top;
-      this.panel.style.right = 'auto';
-    });
-    head.addEventListener('pointermove', (e) => {
-      if (!dragging) return;
-      const maxX = window.innerWidth - 80;
-      const maxY = window.innerHeight - 40;
-      this.panel.style.left = Math.min(Math.max(0, ox + (e.clientX - sx)), maxX) + 'px';
-      this.panel.style.top = Math.min(Math.max(0, oy + (e.clientY - sy)), maxY) + 'px';
-    });
-    const end = (e) => { if (dragging) { dragging = false; try { head.releasePointerCapture(e.pointerId); } catch {} } };
-    head.addEventListener('pointerup', end);
-    head.addEventListener('pointercancel', end);
-  }
-
   destroy() {
-    this.wrap.remove();
+    this.host.innerHTML = '';
+    this.host.classList.remove('watc-content');
   }
 }
 
