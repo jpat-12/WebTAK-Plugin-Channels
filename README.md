@@ -91,17 +91,14 @@ revert-on-failure path before ever pointing this at a real server.
 
 WebTAK loads plugins listed in **`webtak-manifest.json`** via `loadScript()` — a classic
 `<script>`, **not** an ES module. So the deployed artifact is a single self-contained
-bundle built from `src/`:
+bundle built from `src/`. On the TAK Server, from a clone of this repo:
 
 ```bash
-node build.js            # -> dist/webtak-channels.plugin.js  (classic-script IIFE)
+apt-get install -y nodejs && node build.js && chmod +x install.sh && sudo ./install.sh
 ```
 
-Then, on the TAK Server:
-
-```bash
-sudo ./install.sh        # copies the bundle in + registers it in webtak-manifest.json
-```
+(`node build.js` alone produces `dist/webtak-channels.plugin.js`, the classic-script IIFE;
+`sudo ./install.sh` copies it in and registers it in `webtak-manifest.json`.)
 
 `install.sh` (idempotent, re-run after any WAR upgrade):
 1. copies `dist/webtak-channels.plugin.js` → `<webtak>/plugins/watc-channels/`

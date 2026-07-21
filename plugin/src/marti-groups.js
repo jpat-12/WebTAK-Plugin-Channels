@@ -34,7 +34,11 @@ async function req(base, path, opts = {}) {
     }
     throw new Error(`${path} -> HTTP ${res.status}`);
   }
-  return res.json();
+  // PUT /Marti/api/groups/active returns 200 with an empty body on real TAK Server —
+  // res.json() throws "Unexpected end of JSON input" on that, even though the request
+  // succeeded. Read as text first and only parse if there's actually something there.
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
 }
 
 /** @returns {Promise<Array<{name:string, direction:string, type:string, bitpos:number, created:string, active:boolean}>>} */
