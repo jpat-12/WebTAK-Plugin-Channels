@@ -20,6 +20,7 @@ const OUT = path.join(OUT_DIR, 'webtak-channels.plugin.js');
 const MODULES = [
   'config.js',
   'marti-groups.js',
+  'channel-prefs.js',
   'styles.js',
   'ui.js',
   'floating-panel.js',

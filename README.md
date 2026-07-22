@@ -24,13 +24,27 @@ UI over them:
 | Endpoint | Purpose |
 |---|---|
 | `GET /Marti/api/groups/all` | Every group the current session is a member of, each with an `active` flag |
-| `PUT /Marti/api/groups/active` | Re-post the (possibly modified) group list; server flips each group's active bit for this connection |
+| `PUT /Marti/api/groups/active?clientUid=<uid>` | Re-post the (possibly modified) group list; server flips each group's active bit for the connection identified by `clientUid` |
 
 This plugin is built the same way: no separate WebTAK-side "channels" model, just a
 panel that reads and writes that same API. Because WebTAK's page origin **is** an
 authenticated TAK Server client (session cookie already set), the plugin needs no host
 config, API key, or separate login — unlike the Video Viewer plugin, which talks to a
 different host (the Restreamer) and does need connection settings.
+
+### The `clientUid` requirement (found by decompiling ATAK itself, not guessed)
+
+An early version of this plugin's PUT omitted `clientUid` — it returned 200 but silently
+had no effect on live inbound traffic (confirmed in testing: toggling a channel off
+stopped nothing). The fix came from decompiling ATAK's actual Channels implementation out
+of a real ATAK core `main.jar`
+(`com.atakmap.android.channels.net.SetActiveServerGroupsOperation`): it builds the PUT as
+`/api/groups/active?clientUid=` + `MapView.getDeviceUid()`. Without identifying *which*
+live connection's routing state to update, the server has nothing to apply the change to.
+WebTAK's equivalent of ATAK's device UID is `window.WebTAK.user.getUser().clientSeed` — a
+UUID confirmed live in a running session, and already used elsewhere in WebTAK's own
+bundle to identify "this session" (e.g. matching mission subscribers against the current
+user). `marti-groups.js` now sends it on every PUT.
 
 ### Why a toggle only affects *future* data, not what's already on the map
 
@@ -47,6 +61,17 @@ data left saying which channel it came from. Matches ATAK's own behavior in this
 this is a property of the underlying TAK Server mechanism, not a gap specific to this
 plugin.
 
+### Why toggles need to be remembered locally, not just server-side
+
+TAK Server's per-group `active` flag lives on the **live connection**, not on your
+account — a brand-new WebTAK session starts with whatever the server's default group
+membership is, regardless of what you chose last time. Left alone, that means a channel
+you turned off would silently come back on after every reload. `channel-prefs.js` is the
+fix: every successful toggle is saved to `localStorage` (keyed by server + channel name),
+and each time the panel opens or refreshes, it compares the server's just-fetched state
+against your saved choices and re-applies any that drifted — in one `PUT`, before you see
+anything render. This is the same thing ATAK's own Channels manager does on reconnect.
+
 ---
 
 ## Layout
@@ -60,6 +85,9 @@ plugin/
     core.js            Framework-free singleton (window.TAKChannels)
     config.js          Runtime config (takServerBase override for dev), persisted to localStorage
     marti-groups.js     GET /Marti/api/groups/all + PUT /Marti/api/groups/active client
+    channel-prefs.js     Remembers the operator's last on/off choice per channel across
+                        reloads/reconnects (TAK Server resets the active flag per
+                        connection, not per account — see below)
     ui.js               ChannelsPanel: filterable list + per-channel toggle switches,
                         mounts into any host element (WebTAK's own drawer container, or
                         the floating fallback below)
@@ -90,6 +118,7 @@ revert-on-failure path before ever pointing this at a real server.
 |---|---|---|
 | List channels (`GET .../groups/all`) | ✅ Working | Same-origin fetch, session cookie auth |
 | Toggle a channel (`PUT .../groups/active`) | ✅ Working | Optimistic UI update, reverts + shows error on failure |
+| Remember on/off choice across reload/reconnect | ✅ Working | `channel-prefs.js`, `localStorage`-backed; reconciled against the server on every refresh |
 | Filter/search by name | ✅ Working | Client-side, case-insensitive substring |
 | Direction badge (IN / OUT / BOTH) | ✅ Working | Cosmetic only — doesn't affect the toggle |
 | Real docked WebTAK drawer (like Contacts / Point Dropper) | ✅ Working | `Drawer` model + `drawers:[...]` on the Plugin, read directly out of WebTAK's own bundle — see `plugin/index.js` |

@@ -15,6 +15,7 @@
 
 import { fetchGroups, pushActiveGroups } from './marti-groups.js';
 import { getConfig } from './config.js';
+import { getSavedActive, saveActive } from './channel-prefs.js';
 
 export class ChannelsPanel {
   constructor(host) {
@@ -52,12 +53,34 @@ export class ChannelsPanel {
     try {
       const { takServerBase } = getConfig();
       this.groups = await fetchGroups(takServerBase);
+      await this._reconcileSavedPrefs(takServerBase);
       this._render();
     } catch (err) {
       this.body.innerHTML = `<div class="watc-error">${escapeHtml(err.message)}</div>`;
     } finally {
       this._loading = false;
       refreshBtn.disabled = false;
+    }
+  }
+
+  // A fresh connection resets every group to the server's default active state, which
+  // drops whatever the operator previously chose. Re-apply any saved preference that
+  // disagrees with what the server just handed back, in one PUT, before rendering —
+  // so the panel never flashes the server default before snapping to the saved state.
+  async _reconcileSavedPrefs(takServerBase) {
+    let changed = false;
+    this.groups.forEach((g) => {
+      const saved = getSavedActive(takServerBase, g.name);
+      if (saved !== null && saved !== g.active) {
+        g.active = saved;
+        changed = true;
+      }
+    });
+    if (!changed) return;
+    try {
+      await pushActiveGroups(takServerBase, this.groups);
+    } catch {
+      // Best effort — the panel still shows the intended state; a later refresh/toggle retries.
     }
   }
 
@@ -112,6 +135,7 @@ export class ChannelsPanel {
     try {
       const { takServerBase } = getConfig();
       await pushActiveGroups(takServerBase, this.groups);
+      saveActive(takServerBase, group.name, next);
     } catch (err) {
       group.active = prev;
       input.checked = prev;

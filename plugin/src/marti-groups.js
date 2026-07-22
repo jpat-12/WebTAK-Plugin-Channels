@@ -1,11 +1,25 @@
 // Client for TAK Server's Marti group-membership API — the same endpoints ATAK's
 // Channels manager uses under the hood:
 //
-//   GET /Marti/api/groups/all     -> every group (aka "channel") the CURRENT connection's
-//                                    user is a member of, each with an `active` flag.
-//   PUT /Marti/api/groups/active  -> re-POSTs the (possibly modified) group list; the
-//                                    server flips each group's active bit for this
-//                                    connection to whatever `active` value was sent.
+//   GET /Marti/api/groups/all                    -> every group (aka "channel") the
+//                                                    CURRENT connection's user is a
+//                                                    member of, each with an `active` flag.
+//   PUT /Marti/api/groups/active?clientUid=<uid>  -> re-POSTs the (possibly modified)
+//                                                    group list; the server flips each
+//                                                    group's active bit for the
+//                                                    connection identified by clientUid.
+//
+// The `clientUid` query param on the PUT is not optional — this was confirmed by
+// decompiling ATAK's own Channels implementation
+// (com.atakmap.android.channels.net.SetActiveServerGroupsOperation, pulled from a real
+// ATAK core main.jar): it builds the PUT URL as
+// `/api/groups/active?clientUid=` + MapView.getDeviceUid(). Without it, the server has
+// no way to know *which* live connection's routing state to update — the PUT still
+// returns 200, but nothing actually changes for your session (this was observed: a
+// channel toggle appeared to succeed but didn't stop inbound traffic, until this param
+// was added). WebTAK's equivalent of ATAK's device UID is
+// `window.WebTAK.user.getUser().clientSeed` (confirmed live: a UUID, used elsewhere in
+// WebTAK's own bundle to identify "this session" when comparing mission subscribers).
 //
 // A "group" here is a TAK Server broadcast/data-sync group (Blue, __ANON__, a mission's
 // group, etc) — this is the server-side mechanism ATAK's Channels UI toggles, distinct
@@ -19,6 +33,16 @@
 function apiBase(base) {
   const b = (base || '').trim().replace(/\/+$/, '');
   return b || ''; // '' = relative to current origin, e.g. fetch('/Marti/api/groups/all')
+}
+
+// Returns null outside a real WebTAK page (e.g. the standalone demo), where there's no
+// clientUid to send and the server-side effect being modeled doesn't apply anyway.
+function currentClientUid() {
+  try {
+    return (window.WebTAK && window.WebTAK.user && window.WebTAK.user.getUser().clientSeed) || null;
+  } catch {
+    return null;
+  }
 }
 
 async function req(base, path, opts = {}) {
@@ -56,7 +80,9 @@ export async function fetchGroups(base) {
  * — not a partial list.
  */
 export async function pushActiveGroups(base, groups) {
-  return req(base, '/Marti/api/groups/active', {
+  const clientUid = currentClientUid();
+  const qs = clientUid ? `?clientUid=${encodeURIComponent(clientUid)}` : '';
+  return req(base, `/Marti/api/groups/active${qs}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(groups),

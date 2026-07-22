@@ -48,11 +48,25 @@ function setConfig(patch) {
 // Client for TAK Server's Marti group-membership API — the same endpoints ATAK's
 // Channels manager uses under the hood:
 //
-//   GET /Marti/api/groups/all     -> every group (aka "channel") the CURRENT connection's
-//                                    user is a member of, each with an `active` flag.
-//   PUT /Marti/api/groups/active  -> re-POSTs the (possibly modified) group list; the
-//                                    server flips each group's active bit for this
-//                                    connection to whatever `active` value was sent.
+//   GET /Marti/api/groups/all                    -> every group (aka "channel") the
+//                                                    CURRENT connection's user is a
+//                                                    member of, each with an `active` flag.
+//   PUT /Marti/api/groups/active?clientUid=<uid>  -> re-POSTs the (possibly modified)
+//                                                    group list; the server flips each
+//                                                    group's active bit for the
+//                                                    connection identified by clientUid.
+//
+// The `clientUid` query param on the PUT is not optional — this was confirmed by
+// decompiling ATAK's own Channels implementation
+// (com.atakmap.android.channels.net.SetActiveServerGroupsOperation, pulled from a real
+// ATAK core main.jar): it builds the PUT URL as
+// `/api/groups/active?clientUid=` + MapView.getDeviceUid(). Without it, the server has
+// no way to know *which* live connection's routing state to update — the PUT still
+// returns 200, but nothing actually changes for your session (this was observed: a
+// channel toggle appeared to succeed but didn't stop inbound traffic, until this param
+// was added). WebTAK's equivalent of ATAK's device UID is
+// `window.WebTAK.user.getUser().clientSeed` (confirmed live: a UUID, used elsewhere in
+// WebTAK's own bundle to identify "this session" when comparing mission subscribers).
 //
 // A "group" here is a TAK Server broadcast/data-sync group (Blue, __ANON__, a mission's
 // group, etc) — this is the server-side mechanism ATAK's Channels UI toggles, distinct
@@ -66,6 +80,16 @@ function setConfig(patch) {
 function apiBase(base) {
   const b = (base || '').trim().replace(/\/+$/, '');
   return b || ''; // '' = relative to current origin, e.g. fetch('/Marti/api/groups/all')
+}
+
+// Returns null outside a real WebTAK page (e.g. the standalone demo), where there's no
+// clientUid to send and the server-side effect being modeled doesn't apply anyway.
+function currentClientUid() {
+  try {
+    return (window.WebTAK && window.WebTAK.user && window.WebTAK.user.getUser().clientSeed) || null;
+  } catch {
+    return null;
+  }
 }
 
 async function req(base, path, opts = {}) {
@@ -103,11 +127,54 @@ async function fetchGroups(base) {
  * — not a partial list.
  */
 async function pushActiveGroups(base, groups) {
-  return req(base, '/Marti/api/groups/active', {
+  const clientUid = currentClientUid();
+  const qs = clientUid ? `?clientUid=${encodeURIComponent(clientUid)}` : '';
+  return req(base, `/Marti/api/groups/active${qs}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(groups),
   });
+}
+
+
+/* ===== src/channel-prefs.js ===== */
+// Persists the operator's last-chosen active/inactive state per channel, so it survives
+// a WebTAK reload or reconnect.
+//
+// TAK Server's group `active` flag lives on the live connection, not on the account —
+// a fresh connection resets every group to whatever the server's default membership
+// state is (usually all active). Without this, toggling a channel off would only last
+// until the next page reload, which is not how ATAK's own Channels manager behaves: it
+// saves the operator's choice locally and re-applies it after each new connection. This
+// module is that same local memory for WebTAK.
+//
+// Keyed by takServerBase (or the page origin if blank) + group name, so preferences
+// don't bleed across different servers if `takServerBase` is ever overridden for dev.
+
+const PREFS_STORAGE_KEY = 'watc.channel-prefs.v1';
+
+function loadPrefs() {
+  try { return JSON.parse(localStorage.getItem(PREFS_STORAGE_KEY) || '{}'); }
+  catch { return {}; }
+}
+
+let prefs = loadPrefs();
+
+function scopeKey(base) {
+  const origin = (base || (typeof location !== 'undefined' ? location.origin : '')).trim().replace(/\/+$/, '');
+  return origin || 'default';
+}
+
+/** @returns {boolean|null} the saved preference, or null if the operator never toggled this channel. */
+function getSavedActive(base, name) {
+  const scope = prefs[scopeKey(base)];
+  return scope && Object.prototype.hasOwnProperty.call(scope, name) ? scope[name] : null;
+}
+
+function saveActive(base, name, active) {
+  const key = scopeKey(base);
+  prefs = { ...prefs, [key]: { ...(prefs[key] || {}), [name]: active } };
+  try { localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(prefs)); } catch { /* private mode / quota */ }
 }
 
 
@@ -248,12 +315,34 @@ class ChannelsPanel {
     try {
       const { takServerBase } = getConfig();
       this.groups = await fetchGroups(takServerBase);
+      await this._reconcileSavedPrefs(takServerBase);
       this._render();
     } catch (err) {
       this.body.innerHTML = `<div class="watc-error">${escapeHtml(err.message)}</div>`;
     } finally {
       this._loading = false;
       refreshBtn.disabled = false;
+    }
+  }
+
+  // A fresh connection resets every group to the server's default active state, which
+  // drops whatever the operator previously chose. Re-apply any saved preference that
+  // disagrees with what the server just handed back, in one PUT, before rendering —
+  // so the panel never flashes the server default before snapping to the saved state.
+  async _reconcileSavedPrefs(takServerBase) {
+    let changed = false;
+    this.groups.forEach((g) => {
+      const saved = getSavedActive(takServerBase, g.name);
+      if (saved !== null && saved !== g.active) {
+        g.active = saved;
+        changed = true;
+      }
+    });
+    if (!changed) return;
+    try {
+      await pushActiveGroups(takServerBase, this.groups);
+    } catch {
+      // Best effort — the panel still shows the intended state; a later refresh/toggle retries.
     }
   }
 
@@ -308,6 +397,7 @@ class ChannelsPanel {
     try {
       const { takServerBase } = getConfig();
       await pushActiveGroups(takServerBase, this.groups);
+      saveActive(takServerBase, group.name, next);
     } catch (err) {
       group.active = prev;
       input.checked = prev;
